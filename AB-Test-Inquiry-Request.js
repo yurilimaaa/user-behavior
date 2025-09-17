@@ -49,7 +49,8 @@ function ga4CountEventWithParamTrue_(propertyId, eventName, paramName, startDate
 
   const request = {
     dateRanges: [{ startDate, endDate }],
-    metrics: [{ name: 'eventCount' }],
+    // Changed metric from eventCount to totalUsers to count distinct users instead of raw event counts
+    metrics: [{ name: 'totalUsers' }],
     dimensions: [
       { name: 'eventName' },
       { name: `customEvent:${paramName}` }
@@ -95,7 +96,8 @@ function safeGa4EventCount_(propertyId, eventName, startDate, endDate, filter) {
     Logger.log(`▶️ GA4 request: event=${eventName}, date=${startDate}, filter=${JSON.stringify(filter)}`);
     const request = {
       dateRanges: [{ startDate, endDate }],
-      metrics: [{ name: 'eventCount' }],
+      // Changed metric from eventCount to totalUsers to count distinct users instead of raw event counts
+      metrics: [{ name: 'totalUsers' }],
       dimensions: [{ name: 'eventName' }],
       dimensionFilter: { andGroup: { expressions: expr } },
       keepEmptyRows: false
