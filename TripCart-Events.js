@@ -1,4 +1,4 @@
-const TRIPCART_SHEET_NAME = 'TripCart';
+const TRIPCART_SHEET_NAME = 'TripCart-Events';
 const DATA_FOLDER_ID = '1cDY3s5pK99jHkSuliIifjrI_M3Fa245b';
 const ROLLING_RECALC_DAYS = 2; // Recompute the past N days each run to catch late GA4/CSV data
 
