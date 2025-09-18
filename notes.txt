@@ -8,24 +8,6 @@ Notes:
 
 ---
 
-Events and Metrics
-    sendInquiryTC = 'trip-cart_price-calculated', { key: 'p2', value: 'false' };
-    bookNowTC = 'trip-cart_price-calculated', { key: 'p2', value: 'true'  };
-
-    inquiryStart = 'inquiry_start'
-    inquirySubmit = 'inquiry_submit_success'
-
-    bnClick = 'trip-cart_book-now-click'
-    proceedPay ='trip-cart_book-now-proceed-to-payment-cl'
-
-    ab_bucket: 'trip-cart-cta:send-inquiry
-    ab_bucket: 'trip-cart-cta:request-a-quote'
-    
-
-    count by activeUsers 
-
----
-
 CELL CONTENT
 - A8 = last updated format =`2025-09-18 13:46:58`
 
@@ -49,6 +31,26 @@ CELL CONTENT
 - E4 = `purchase`, { key: 'purchase_type', value: 'marketplace_instabook' } + ab_bucket: 'trip-cart-cta:send-inquiry` + activeUsers
 - E5 = `purchase`, { key: 'purchase_type', value: 'marketplace_instabook' } + ab_bucket: 'trip-cart-cta:request-a-quote' + activeUsers
 
+
+
+// done
 - F = setFormula(`=IFERROR(C${row}/B${row},0)`);
 - G = setFormula(`=IFERROR(D${row}/B${row},0)`);
 - H = setFormula(`=IFERROR(E${row}/B${row},0)`);
+
+---
+
+Events and Metrics
+    sendInquiryTC = 'trip-cart_price-calculated', { key: 'p2', value: 'false' };
+    bookNowTC = 'trip-cart_price-calculated', { key: 'p2', value: 'true'  };
+
+    inquiryStart = 'inquiry_start'
+    inquirySubmit = 'inquiry_submit_success'
+
+    bnClick = 'trip-cart_book-now-click'
+    proceedPay ='trip-cart_book-now-proceed-to-payment-cl'
+
+    ab_bucket: 'trip-cart-cta:send-inquiry
+    ab_bucket: 'trip-cart-cta:request-a-quote'
+    
+    count by activeUsers 
