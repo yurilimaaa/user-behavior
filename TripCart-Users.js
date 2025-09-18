@@ -1,208 +1,298 @@
 /**
- * TripCart-Users.js
- * Sheet updater for TripCart unique user counts (GA4 metric: totalUsers)
- * Columns (A→Q):
- * A Date | B Total Users | C Listing Page | D Send Inquiry TC | E Inquiry Start | F % Start Inquiry (E/D)
- * G Inquiry Submit | H % Submit (G/E) | I Completed Inquiry (CSV/manual) | J Conversion Rate (I/G)
- * K Book Now TC | L BN Clicks | M % Click BN (L/K) | N Proceed to Payment | O % BN (N/L)
- * P Confirmed IB (CSV) | Q Conversion Rate (P/L)
+ * TripCart-Users
+ *
+ * Populates the "TripCart-Users" sheet with UNIQUE USERS per event
+ * and enriches with Completed Inquiry (non‑IB) and Confirmed IB from CSVs.
+ *
+ * Assumptions:
+ *  - GA4_PROPERTY_ID is defined elsewhere in the project (do NOT redeclare here).
+ *  - Advanced service scopes allow UrlFetchApp (analytics.readonly is already in appsscript.json).
+ *  - Helper tabs/other scripts may also exist; this file is self‑contained and does not rely
+ *    on project-specific wrappers.
  */
 
+// === CONFIG ===
+const TC_USERS_SHEET = 'TripCart-Users';
+const DRIVE_FOLDER_ID = '1cDY3s5pK99jHkSuliIifjrI_M3Fa245b';
 
-
-// --- Sheet constants ---
-const TRIPCART_USERS_SHEET_NAME = 'TripCart-Users';
-
-// ---------- Helpers ----------
-/**
- * Find row by ISO date (yyyy-MM-dd) in column A. Returns 1-based row or -1.
- */
-function findRowByDate_(sheet, dateString) {
-  const last = sheet.getLastRow();
-  if (last < 2) return -1;
-  const values = sheet.getRange(2, 1, last - 1, 1).getValues();
-  for (let i = 0; i < values.length; i++) {
-    if (values[i][0] === dateString) return i + 2;
+// === PUBLIC ENTRY POINTS ===
+function tripCartUsersBackfill(startDateStr, endDateStr) {
+  const start = startDateStr ? parseUTC_(startDateStr) : parseUTC_('2025-07-01');
+  const end = endDateStr ? parseUTC_(endDateStr) : yesterdayUTC_();
+  for (let d = new Date(start); d <= end; d.setUTCDate(d.getUTCDate() + 1)) {
+    const ds = toYYYYMMDD_(d);
+    tripCartUsersUpdateForDate(ds);
   }
-  return -1;
 }
 
-/**
- * CSV lookup (stub). If you have CSVs, implement here.
- */
-function getCsvValue_(dateString, fieldName) {
-  // TODO: implement if/when CSVs are ready. For now, keep existing cell value.
-  return null;
+function tripCartUsersDailyUpdate(dateStr) {
+  const ds = dateStr && dateStr.trim() ? dateStr.trim() : toYYYYMMDD_(yesterdayUTC_());
+  Logger.log('Processing tripCartUsersDailyUpdate for date: %s', ds);
+  tripCartUsersUpdateForDate(ds);
 }
 
-/**
- * GA4: totalUsers for an event (optionally with event parameter).
- * Uses dimension 'eventName' and (when provided) 'customEvent:<param>'.
- */
-function ga4UserCount_(propertyId, dateString, eventName, paramName, paramValue) {
-  const request = {
-    dateRanges: [{ startDate: dateString, endDate: dateString }],
-    metrics: [{ name: 'totalUsers' }],
-    dimensions: [{ name: 'eventName' }],
+// === CORE ===
+function tripCartUsersUpdateForDate(dateStr) {
+  const sh = getSheet_(TC_USERS_SHEET);
+  const row = findOrCreateRowByDate_(sh, dateStr);
+
+  // GA4 unique users per event/metric
+  const totalUsers = ga4ActiveUsersTotal_(dateStr);
+  const listingPage = ga4ActiveUsersForEvent_(dateStr, 'listing_page_view');
+
+  // CTA split
+  const sendInquiryTC = ga4ActiveUsersForEvent_(dateStr, 'trip-cart_price-calculated', { key: 'p2', value: 'false' });
+  const bookNowTC     = ga4ActiveUsersForEvent_(dateStr, 'trip-cart_price-calculated', { key: 'p2', value: 'true'  });
+
+  const inquiryStart  = ga4ActiveUsersForEvent_(dateStr, 'inquiry_start');
+  const inquirySubmit = ga4ActiveUsersForEvent_(dateStr, 'inquiry_submit_success');
+
+  const bnClicks      = ga4ActiveUsersForEvent_(dateStr, 'trip-cart_book-now-click');
+  const proceedPay    = ga4ActiveUsersForEvent_(dateStr, 'trip-cart_book-now-proceed-to-payment-cl');
+
+  // CSVs (file name has TODAY, content has YESTERDAY -> pass dateStr and search file with dateStr+1)
+  const completedInquiry = readCompletedInquiryCsv_(dateStr) || 0; // Column I
+  const confirmedIB      = readConfirmedIbCsv_(dateStr) || 0;      // Column P
+
+  // Write numeric values
+  const values = [
+    [ // A..Q for a single row (we only write numeric cells; A already has date)
+      null,
+      totalUsers,               // B
+      listingPage,              // C
+      sendInquiryTC,            // D
+      inquiryStart,             // E
+      null,                     // F formula
+      inquirySubmit,            // G
+      null,                     // H formula
+      completedInquiry,         // I (from CSV non-IB)
+      null,                     // J formula
+      bookNowTC,                // K
+      bnClicks,                 // L
+      null,                     // M formula
+      proceedPay,               // N
+      null,                     // O formula
+      confirmedIB,              // P (from CSV IB)
+      null                      // Q formula
+    ]
+  ];
+  sh.getRange(row, 1, 1, values[0].length).offset(0, 0).setValues(values);
+
+  // Ensure date in A
+  sh.getRange(row, 1).setValue(dateStr);
+
+  // Put formulas (percent/ratio)
+  setFormulasForRow_(sh, row);
+  applyFormats_(sh, row);
+}
+
+// === FORMATTING ===
+function setFormulasForRow_(sh, row) {
+  sh.getRange(row, 6).setFormula(`=IFERROR(E${row}/D${row},0)`); // F % Start Inquiry
+  sh.getRange(row, 8).setFormula(`=IFERROR(G${row}/E${row},0)`); // H % Submit
+  sh.getRange(row,10).setFormula(`=IFERROR(I${row}/G${row},0)`); // J Conversion Rate
+  sh.getRange(row,13).setFormula(`=IFERROR(L${row}/K${row},0)`); // M % Click BN
+  sh.getRange(row,15).setFormula(`=IFERROR(N${row}/L${row},0)`); // O % BN
+  sh.getRange(row,17).setFormula(`=IFERROR(P${row}/L${row},0)`); // Q Conversion Rate
+}
+
+function applyFormats_(sh, row) {
+  // Thousands for counts
+  const countCols = [2,3,4,5,7,9,11,12,14,16];
+  countCols.forEach(c => sh.getRange(row, c).setNumberFormat('#,##0'));
+  // Percent for ratios
+  const pctCols = [6,8,10,13,15,17];
+  pctCols.forEach(c => sh.getRange(row, c).setNumberFormat('0.00%'));
+}
+
+// === GA4 HELPERS (HTTP v1beta) ===
+function ga4ActiveUsersTotal_(dateStr) {
+  const req = {
+    dateRanges: [{ startDate: dateStr, endDate: dateStr }],
+    metrics: [{ name: 'activeUsers' }]
   };
+  const res = ga4RunReportHttp_(req);
+  return (res.rows && res.rows[0] && res.rows[0].metricValues && Number(res.rows[0].metricValues[0].value)) || 0;
+}
 
+function ga4ActiveUsersForEvent_(dateStr, eventName, param) {
+  const dimensions = [{ name: 'eventName' }];
   const filters = [{
     filter: {
       fieldName: 'eventName',
-      stringFilter: { value: eventName, matchType: 'EXACT' },
-    },
+      stringFilter: { value: eventName, matchType: 'EXACT' }
+    }
   }];
-
-  if (paramName) {
-    // Add the customEvent:<param> dimension and filter
-    request.dimensions.push({ name: `customEvent:${paramName}` });
+  if (param && param.key) {
+    // GA4 custom event parameter, e.g. customEvent:p2 == 'true' / 'false'
+    dimensions.push({ name: `customEvent:${param.key}` });
     filters.push({
       filter: {
-        fieldName: `customEvent:${paramName}`,
-        stringFilter: { value: paramValue, matchType: 'EXACT' },
-      },
+        fieldName: `customEvent:${param.key}`,
+        stringFilter: { value: String(param.value), matchType: 'EXACT' }
+      }
     });
   }
-
-  request.dimensionFilter = { andGroup: { expressions: filters } };
-
-  try {
-    const resp = AnalyticsData.Properties.runReport('properties/' + propertyId, request);
-    if (resp && resp.rows && resp.rows.length) {
-      const v = Number(resp.rows[0].metricValues[0].value);
-      return isNaN(v) ? 0 : v;
-    }
-  } catch (e) {
-    Logger.log(`❌ GA4 runReport failed for event=${eventName}, param=${paramName || '-'}: ${e}`);
-  }
-  return 0;
-}
-
-/**
- * GA4: property totalUsers for the day (no event filter).
- */
-function ga4TotalUsers_(propertyId, dateString) {
-  const request = {
-    dateRanges: [{ startDate: dateString, endDate: dateString }],
-    metrics: [{ name: 'totalUsers' }],
+  const req = {
+    dateRanges: [{ startDate: dateStr, endDate: dateStr }],
+    metrics: [{ name: 'activeUsers' }],
+    dimensions,
+    dimensionFilter: { andGroup: { expressions: filters } }
   };
-  try {
-    const resp = AnalyticsData.Properties.runReport('properties/' + propertyId, request);
-    if (resp && resp.rows && resp.rows.length) {
-      const v = Number(resp.rows[0].metricValues[0].value);
-      return isNaN(v) ? 0 : v;
+  const res = ga4RunReportHttp_(req);
+  let total = 0;
+  if (res.rows) {
+    for (const r of res.rows) {
+      total += Number(r.metricValues[0].value || 0);
     }
-  } catch (e) {
-    Logger.log(`❌ GA4 totalUsers failed: ${e}`);
+  }
+  return total;
+}
+
+function ga4RunReportHttp_(requestBody) {
+  if (typeof GA4_PROPERTY_ID === 'undefined' || !GA4_PROPERTY_ID) {
+    throw new Error('GA4_PROPERTY_ID is not defined in the project.');
+  }
+  const url = `https://analyticsdata.googleapis.com/v1beta/properties/${GA4_PROPERTY_ID}:runReport`;
+  const resp = UrlFetchApp.fetch(url, {
+    method: 'post',
+    contentType: 'application/json',
+    payload: JSON.stringify(requestBody),
+    headers: { Authorization: `Bearer ${ScriptApp.getOAuthToken()}` },
+    muteHttpExceptions: true
+  });
+  const code = resp.getResponseCode();
+  const body = resp.getContentText();
+  if (code < 200 || code >= 300) throw new Error(`GA4 HTTP ${code}: ${body.substring(0, 500)}`);
+  return JSON.parse(body);
+}
+
+// === SHEET HELPERS ===
+function getSheet_(name) {
+  const ss = SpreadsheetApp.getActive();
+  let sh = ss.getSheetByName(name);
+  if (!sh) sh = ss.insertSheet(name);
+  return sh;
+}
+
+function findOrCreateRowByDate_(sh, dateStr) {
+  const lastRow = sh.getLastRow();
+  if (lastRow < 2) {
+    // assume headers already present; create first data row
+    sh.getRange(2, 1).setValue(dateStr);
+    return 2;
+  }
+  const dates = sh.getRange(2, 1, lastRow - 1, 1).getValues().map(r => String(r[0]));
+  const idx = dates.findIndex(v => v === dateStr);
+  if (idx >= 0) return 2 + idx;
+  // append
+  const newRow = lastRow + 1;
+  sh.getRange(newRow, 1).setValue(dateStr);
+  return newRow;
+}
+
+// === CSV HELPERS ===
+function readCompletedInquiryCsv_(dateStr) {
+  const file = findFirstFileByNames_(plusDays_(dateStr, 1), ['daily-bookings-non-ib']);
+  if (!file) return 0;
+  return sumSecondColumnForDate_(file, dateStr);
+}
+
+function readConfirmedIbCsv_(dateStr) {
+  const file = findFirstFileByNames_(plusDays_(dateStr, 1), ['ib-daily-bookings']);
+  if (!file) return 0;
+  return sumSecondColumnForDate_(file, dateStr);
+}
+
+function findFirstFileByNames_(fileDateStr, prefixes) {
+  const folder = DriveApp.getFolderById(DRIVE_FOLDER_ID);
+  for (const p of prefixes) {
+    const exact = `${p}-${fileDateStr}.csv`;
+    const it = folder.getFilesByName(exact);
+    if (it.hasNext()) return it.next();
+  }
+  // Fallback: scan by contains (safety)
+  const itAll = DriveApp.getFolderById(DRIVE_FOLDER_ID).getFiles();
+  while (itAll.hasNext()) {
+    const f = itAll.next();
+    const name = f.getName();
+    if (name.endsWith('.csv') && prefixes.some(p => name.indexOf(p) === 0) && name.indexOf(fileDateStr) !== -1) {
+      return f;
+    }
+  }
+  return null;
+}
+
+function sumSecondColumnForDate_(file, wantedDate) {
+  const csv = Utilities.parseCsv(file.getBlob().getDataAsString());
+  if (!csv || csv.length < 2) return 0;
+  // Find header indices
+  const header = csv[0].map(h => String(h).trim());
+  const idxDate = header.findIndex(h => /date/i.test(h));
+  const idxVal = header.findIndex(h => /^n$/i.test(h)) >= 0 ? header.findIndex(h => /^n$/i.test(h)) : 1;
+  for (let r = 1; r < csv.length; r++) {
+    const row = csv[r];
+    const d = String(row[idxDate >= 0 ? idxDate : 0]).trim();
+    if (d === wantedDate) {
+      const v = Number(String(row[idxVal]).replace(/,/g, ''));
+      return isFinite(v) ? v : 0;
+    }
   }
   return 0;
 }
 
-// ---------- Row writer ----------
+// === DATE HELPERS ===
+function toYYYYMMDD_(d) {
+  return [d.getUTCFullYear(), pad2_(d.getUTCMonth()+1), pad2_(d.getUTCDate())].join('-');
+}
+function pad2_(n) { return (`0${n}`).slice(-2); }
+function parseUTC_(s) { const [y,m,d] = s.split('-').map(Number); return new Date(Date.UTC(y, m-1, d)); }
+function yesterdayUTC_() { const d = new Date(); d.setUTCHours(0,0,0,0); d.setUTCDate(d.getUTCDate()-1); return d; }
+function plusDays_(dateStr, n) { const d = parseUTC_(dateStr); d.setUTCDate(d.getUTCDate()+n); return toYYYYMMDD_(d); }
+
+// === DEBUGGING ===
 /**
- * Upsert a row and place formulas in F, H, M, O, Q.
+ * Debug: Log total active users from GA4 for two dates to verify column B matches GA4.
  */
-function upsertTripCartUsersDailyRow_(dateString, counts) {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const sheet = ss.getSheetByName(TRIPCART_USERS_SHEET_NAME);
-  if (!sheet) throw new Error(`Sheet "${TRIPCART_USERS_SHEET_NAME}" not found.`);
-
-  let row = findRowByDate_(sheet, dateString);
-  if (row === -1) row = Math.max(2, sheet.getLastRow() + 1);
-
-  // Preserve I and P if already typed/loaded
-  const existingI = sheet.getRange(row, 9).getValue();  // I
-  const existingP = sheet.getRange(row, 16).getValue(); // P
-
-  const completedInquiry = (getCsvValue_(dateString, 'completedInquiry') ?? existingI) || 0;
-  const confirmedIB      = (getCsvValue_(dateString, 'confirmedIB') ?? existingP) || 0;
-
-  // Base numbers
-  const rowValues = [];
-  rowValues[1-1]  = dateString;                 // A
-  rowValues[2-1]  = counts.totalUsers;          // B
-  rowValues[3-1]  = counts.listingPage;         // C
-  rowValues[4-1]  = counts.sendInquiryTC;       // D
-  rowValues[5-1]  = counts.inquiryStart;        // E
-  rowValues[6-1]  = '';                         // F (formula later)
-  rowValues[7-1]  = counts.inquirySubmit;       // G
-  rowValues[8-1]  = '';                         // H (formula later)
-  rowValues[9-1]  = completedInquiry;           // I
-  rowValues[10-1] = '';                         // J (we leave empty; optional to add formula I/G)
-  rowValues[11-1] = counts.bookNowTC;           // K
-  rowValues[12-1] = counts.bnClicks;            // L
-  rowValues[13-1] = '';                         // M (formula later)
-  rowValues[14-1] = counts.proceedToPayment;    // N
-  rowValues[15-1] = '';                         // O (formula later)
-  rowValues[16-1] = confirmedIB;                // P
-  rowValues[17-1] = '';                         // Q (formula later)
-
-  // Write base values
-  sheet.getRange(row, 1, 1, 17).setValues([rowValues]);
-
-  // Formulas
-  sheet.getRange(row, 6).setFormula(`=IFERROR(E${row}/D${row},0)`);
-  sheet.getRange(row, 8).setFormula(`=IFERROR(G${row}/E${row},0)`);
-  sheet.getRange(row, 13).setFormula(`=IFERROR(L${row}/K${row},0)`);
-  sheet.getRange(row, 15).setFormula(`=IFERROR(N${row}/L${row},0)`);
-  sheet.getRange(row, 17).setFormula(`=IFERROR(P${row}/L${row},0)`);
-  sheet.getRange(row, 10).setFormula(`=IFERROR(I${row}/G${row},0)`);
+function testTotalUsersLog() {
+  var date1 = '2025-09-11';
+  var date2 = '2025-09-17';
+  var total1 = ga4ActiveUsersTotal_(date1);
+  var total2 = ga4ActiveUsersTotal_(date2);
+  Logger.log('GA4 activeUsers for %s: %s', date1, total1);
+  Logger.log('GA4 activeUsers for %s: %s', date2, total2);
 }
 
-/**
- * Fetch one day and upsert.
- */
-function tripCartUsersDailyUpdate(dateString, propertyId) {
-  const pid = propertyId || GA4_PROPERTY_ID;
-
-  const totalUsers      = ga4TotalUsers_(pid, dateString); // B
-  const listingPage     = ga4UserCount_(pid, dateString, 'listing_page_view'); // C
-  const sendInquiryTC   = ga4UserCount_(pid, dateString, 'trip-cart_price-calculated', 'p2', 'false'); // D
-  const inquiryStart    = ga4UserCount_(pid, dateString, 'inquiry_start'); // E
-  const inquirySubmit   = ga4UserCount_(pid, dateString, 'inquiry_submit_success'); // G
-  const bookNowTC       = ga4UserCount_(pid, dateString, 'trip-cart_price-calculated', 'p2', 'true'); // K
-  const bnClicks        = ga4UserCount_(pid, dateString, 'trip-cart_book-now-click'); // L
-  const proceedToPay    = ga4UserCount_(pid, dateString, 'trip-cart_book-now-proceed-to-payment-cl'); // N
-
-  upsertTripCartUsersDailyRow_(dateString, {
-    totalUsers,
-    listingPage,
-    sendInquiryTC,
-    inquiryStart,
-    inquirySubmit,
-    bookNowTC,
-    bnClicks,
-    proceedToPayment: proceedToPay,
-  });
-}
-
-// ---------- Schedules ----------
-/** Update yesterday (UTC). */
-function tripCartUsersUpdate_yesterdayUTC() {
-  const y = Utilities.formatDate(new Date(Date.now() - 86400000), 'UTC', 'yyyy-MM-dd');
-  tripCartUsersDailyUpdate(y, GA4_PROPERTY_ID);
-}
-
-/** Update last N days (UTC). */
-function tripCartUsersUpdate_lastNDaysUTC(n) {
-  const days = Math.max(1, Number(n) || 1);
-  for (let i = 0; i < days; i++) {
-    const d = new Date();
-    d.setUTCDate(d.getUTCDate() - i - 1); // walk back from yesterday
-    const s = Utilities.formatDate(d, 'UTC', 'yyyy-MM-dd');
-    tripCartUsersDailyUpdate(s, GA4_PROPERTY_ID);
+function overrideTotalUsersColumnB() {
+  const sh = getSheet_(TC_USERS_SHEET);
+  const lastRow = sh.getLastRow();
+  if (lastRow < 2) {
+    Logger.log('No data rows found in sheet %s.', TC_USERS_SHEET);
+    return;
   }
-}
-
-/** Backfill from 2025-07-01 to yesterday. */
-function tripCartUsersBackfill(startDate, endDate) {
-  const start = startDate || '2025-07-01';
-  const end = endDate || Utilities.formatDate(new Date(Date.now() - 86400000), 'UTC', 'yyyy-MM-dd');
-
-  const d0 = new Date(start + 'T00:00:00Z');
-  const d1 = new Date(end + 'T00:00:00Z');
-  for (let d = new Date(d0); d <= d1; d.setUTCDate(d.getUTCDate() + 1)) {
-    const s = Utilities.formatDate(d, 'UTC', 'yyyy-MM-dd');
-    tripCartUsersDailyUpdate(s, GA4_PROPERTY_ID);
+  const dateValues = sh.getRange(2, 1, lastRow - 1, 1).getValues();
+  for (let i = 0; i < dateValues.length; i++) {
+    const row = i + 2;
+    let cellValue = dateValues[i][0];
+    let dateStr = '';
+    if (cellValue instanceof Date && !isNaN(cellValue)) {
+      dateStr = toYYYYMMDD_(cellValue);
+    } else if (typeof cellValue === 'string') {
+      const trimmed = cellValue.trim();
+      if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+        dateStr = trimmed;
+      }
+    }
+    if (!dateStr) {
+      Logger.log('Row %d has invalid or empty date in column A; skipping.', row);
+      continue;
+    }
+    try {
+      const totalUsers = ga4ActiveUsersTotal_(dateStr);
+      sh.getRange(row, 2).setValue(totalUsers);
+      Logger.log('Updated row %d date %s with totalUsers %d in column B.', row, dateStr, totalUsers);
+    } catch (e) {
+      Logger.log('Error updating row %d date %s: %s', row, dateStr, e.message);
+    }
   }
 }

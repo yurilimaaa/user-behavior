@@ -1,0 +1,54 @@
+Tab: AB-Test-SI-RQ-Summary
+
+Notes:
+- I will add a daily trigger to update the file daily
+- startDate should be a variable that will define the day the data should start counting
+- Do not update the column names on row 1
+- Numbers shold be incremental starting on the startDate
+
+---
+
+Events and Metrics
+    sendInquiryTC = 'trip-cart_price-calculated', { key: 'p2', value: 'false' };
+    bookNowTC = 'trip-cart_price-calculated', { key: 'p2', value: 'true'  };
+
+    inquiryStart = 'inquiry_start'
+    inquirySubmit = 'inquiry_submit_success'
+
+    bnClick = 'trip-cart_book-now-click'
+    proceedPay ='trip-cart_book-now-proceed-to-payment-cl'
+
+    ab_bucket: 'trip-cart-cta:send-inquiry
+    ab_bucket: 'trip-cart-cta:request-a-quote'
+    
+
+    count by activeUsers 
+
+---
+
+CELL CONTENT
+- A8 = last updated format =`2025-09-18 13:46:58`
+
+- B2 = 'trip-cart_price-calculated', { key: 'p2', value: 'false' } + ab_bucket: 'trip-cart-cta:send-inquiry` + activeUsers
+- B3 = 'trip-cart_price-calculated', { key: 'p2', value: 'false' } + ab_bucket: 'trip-cart-cta:request-a-quote' + activeUsers
+- B4 = 'trip-cart_price-calculated', { key: 'p2', value: 'true'  } + ab_bucket: 'trip-cart-cta:send-inquiry` + activeUsers
+- B5 = 'trip-cart_price-calculated', { key: 'p2', value: 'true'  } + ab_bucket: 'trip-cart-cta:request-a-quote' + activeUsers
+
+- C2 = 'inquiry_start' + ab_bucket: 'trip-cart-cta:send-inquiry` + activeUsers
+- C3 = 'inquiry_start' + ab_bucket: 'trip-cart-cta:request-a-quote` + activeUsers
+- C4 = 'trip-cart_book-now-click' + ab_bucket: 'trip-cart-cta:send-inquiry` + activeUsers
+- C5 = 'trip-cart_book-now-click' + ab_bucket: 'trip-cart-cta:request-a-quote` + activeUsers
+
+- D2 = 'inquiry_submit_success' + ab_bucket: 'trip-cart-cta:send-inquiry` + activeUsers
+- D3 = 'inquiry_submit_success' + ab_bucket: 'trip-cart-cta:request-a-quote` + activeUsers
+- D4 = 'trip-cart_book-now-proceed-to-payment-cl' + ab_bucket: 'trip-cart-cta:send-inquiry` + activeUsers
+- D5 = 'trip-cart_book-now-proceed-to-payment-cl' + ab_bucket: 'trip-cart-cta:request-a-quote` + activeUsers
+
+- E2 = `purchase`, { key: 'purchase_type', value: 'marketplace' } + ab_bucket: 'trip-cart-cta:send-inquiry` + activeUsers
+- E3 = `purchase`, { key: 'purchase_type', value: 'marketplace' } + ab_bucket: 'trip-cart-cta:request-a-quote' + activeUsers
+- E4 = `purchase`, { key: 'purchase_type', value: 'marketplace_instabook' } + ab_bucket: 'trip-cart-cta:send-inquiry` + activeUsers
+- E5 = `purchase`, { key: 'purchase_type', value: 'marketplace_instabook' } + ab_bucket: 'trip-cart-cta:request-a-quote' + activeUsers
+
+- F = setFormula(`=IFERROR(C${row}/B${row},0)`);
+- G = setFormula(`=IFERROR(D${row}/B${row},0)`);
+- H = setFormula(`=IFERROR(E${row}/B${row},0)`);

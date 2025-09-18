@@ -1,8 +1,5 @@
 // Toggle to disable ab_bucket filters if dimension not yet live
 const USE_AB_BUCKET = false;
-if (typeof GA4_PROPERTY_ID === 'undefined') {
-  const GA4_PROPERTY_ID = 'properties/418611571';
-}
 
 function buildFilter(baseFilter) {
   const clone = { ...baseFilter };
@@ -49,8 +46,8 @@ function ga4CountEventWithParamTrue_(propertyId, eventName, paramName, startDate
 
   const request = {
     dateRanges: [{ startDate, endDate }],
-    // Changed metric from eventCount to totalUsers to count distinct users instead of raw event counts
-    metrics: [{ name: 'totalUsers' }],
+    // Changed metric from eventCount to activeUsers to count distinct users instead of raw event counts
+    metrics: [{ name: 'activeUsers' }],
     dimensions: [
       { name: 'eventName' },
       { name: `customEvent:${paramName}` }
@@ -72,7 +69,7 @@ function ga4CountEventWithParamTrue_(propertyId, eventName, paramName, startDate
  * Updates yesterday’s data into the next available row.
  */
 
-const ABTEST_SHEET_NAME = 'AB-Test';
+const ABTEST_SHEET_NAME = 'AB-Test-SI-RQ-Daily';
 const ABTEST_FOLDER_ID = '1cDY3s5pK99jHkSuliIifjrI_M3Fa245b'; // same Drive folder as TripCart CSVs
 
 function safeGa4EventCount_(propertyId, eventName, startDate, endDate, filter) {
@@ -85,6 +82,15 @@ function safeGa4EventCount_(propertyId, eventName, startDate, endDate, filter) {
         stringFilter: { value: eventName, matchType: 'EXACT' }
       }
     });
+    // Optional customEvent:p2 filter (e.g., for trip-cart_price-calculated). This works regardless of ab_bucket toggle.
+    if (eventName === 'trip-cart_price-calculated' && filter && typeof filter.p2 !== 'undefined') {
+      expr.push({
+        filter: {
+          fieldName: 'customEvent:p2',
+          stringFilter: { value: String(filter.p2), matchType: 'EXACT' }
+        }
+      });
+    }
     if (filter && filter.ab_bucket) {
       expr.push({
         filter: {
@@ -96,8 +102,8 @@ function safeGa4EventCount_(propertyId, eventName, startDate, endDate, filter) {
     Logger.log(`▶️ GA4 request: event=${eventName}, date=${startDate}, filter=${JSON.stringify(filter)}`);
     const request = {
       dateRanges: [{ startDate, endDate }],
-      // Changed metric from eventCount to totalUsers to count distinct users instead of raw event counts
-      metrics: [{ name: 'totalUsers' }],
+      // Changed metric from eventCount to activeUsers to count distinct users instead of raw event counts
+      metrics: [{ name: 'activeUsers' }],
       dimensions: [{ name: 'eventName' }],
       dimensionFilter: { andGroup: { expressions: expr } },
       keepEmptyRows: false
@@ -114,6 +120,63 @@ function safeGa4EventCount_(propertyId, eventName, startDate, endDate, filter) {
 function safeGa4CountEventWithParamTrue_(propertyId, eventName, paramName, startDate, endDate, opt) {
   try {
     Logger.log(`▶️ GA4 request: event=${eventName}, param=${paramName}, date=${startDate}, opt=${JSON.stringify(opt)}`);
+    // Modify expr to add customEvent:p2 = true for columns H and M
+    if (eventName === 'trip-cart_price-calculated' && paramName === 'p1' && opt && opt.ab_bucket) {
+      const expr = [];
+      // eventName exact
+      expr.push({
+        filter: {
+          fieldName: 'eventName',
+          stringFilter: { value: eventName, matchType: 'EXACT' }
+        }
+      });
+      // paramName p1 = true
+      expr.push({
+        filter: {
+          fieldName: `customEvent:${paramName}`,
+          stringFilter: { value: 'true', matchType: 'EXACT' }
+        }
+      });
+      // customEvent:p2 = true
+      expr.push({
+        filter: {
+          fieldName: 'customEvent:p2',
+          stringFilter: { value: 'true', matchType: 'EXACT' }
+        }
+      });
+      // ab_bucket if enabled
+      if (typeof USE_AB_BUCKET !== 'undefined' && USE_AB_BUCKET) {
+        expr.push({
+          filter: {
+            fieldName: 'ab_bucket',
+            stringFilter: { value: opt.ab_bucket, matchType: 'EXACT' }
+          }
+        });
+      }
+      const request = {
+        dateRanges: [{ startDate, endDate }],
+        metrics: [{ name: 'activeUsers' }],
+        dimensions: [
+          { name: 'eventName' },
+          { name: `customEvent:${paramName}` },
+          { name: 'customEvent:p2' }
+        ],
+        dimensionFilter: { andGroup: { expressions: expr } },
+        keepEmptyRows: false
+      };
+      const res = ga4RunReport_(propertyId, request);
+      let v = 0;
+      if (res && res.rows && res.rows.length > 0) {
+        v = res.rows[0].metricValues && res.rows[0].metricValues[0] ? Number(res.rows[0].metricValues[0].value) : 0;
+        v = isFinite(v) ? v : 0;
+      }
+      if (v === 0) {
+        Logger.log(`⚠️ Skipping param-based query with p2=true: event=${eventName}, param=${paramName}, ab_bucket=${opt.ab_bucket}`);
+      } else {
+        Logger.log(`✅ GA4 response: event=${eventName}, value=${v}`);
+      }
+      return v;
+    }
     const v = ga4CountEventWithParamTrue_(propertyId, eventName, paramName, startDate, endDate, opt);
     if (v === 0) {
       Logger.log(`⚠️ Skipped or zero result for param-based query: event=${eventName}, param=${paramName}`);
@@ -161,22 +224,22 @@ function abTestUpdateForDate(dateStr) {
   if (!row) row = sheet.getLastRow() + 1;
 
   // --- GA4 queries ---
-  // b: trip-cart_price-calculated events for send-inquiry bucket
-  Logger.log(`▶️ GA4 request: event=trip-cart_price-calculated, filter=${JSON.stringify(buildFilter({ eventName: 'trip-cart_price-calculated', ab_bucket: 'trip-cart-cta:send-inquiry' }))}, date=${dateStr}`);
-  const b = safeGa4EventCount_(GA4_PROPERTY_ID, 'trip-cart_price-calculated', dateStr, dateStr, buildFilter({ eventName: 'trip-cart_price-calculated', ab_bucket: 'trip-cart-cta:send-inquiry' }));
+  // b: trip-cart_price-calculated events for send-inquiry bucket with customEvent:p2 = false
+  Logger.log(`▶️ GA4 request: event=trip-cart_price-calculated, filter=${JSON.stringify(buildFilter({ eventName: 'trip-cart_price-calculated', ab_bucket: 'trip-cart-cta:send-inquiry', p2: false }))}, date=${dateStr}`);
+  const b = safeGa4EventCount_(GA4_PROPERTY_ID, 'trip-cart_price-calculated', dateStr, dateStr, buildFilter({ eventName: 'trip-cart_price-calculated', ab_bucket: 'trip-cart-cta:send-inquiry', p2: false }));
   // c: inquiry_start events for send-inquiry bucket
   Logger.log(`▶️ GA4 request: event=inquiry_start, filter=${JSON.stringify(buildFilter({ eventName: 'inquiry_start', ab_bucket: 'trip-cart-cta:send-inquiry' }))}, date=${dateStr}`);
   const c = safeGa4EventCount_(GA4_PROPERTY_ID, 'inquiry_start', dateStr, dateStr, buildFilter({ eventName: 'inquiry_start', ab_bucket: 'trip-cart-cta:send-inquiry' }));
 
   let e = 0, f = 0, m = 0, n = 0, p = 0;
   if (USE_AB_BUCKET) {
-    // e: trip-cart_price-calculated events for request-a-quote bucket
-    Logger.log(`▶️ GA4 request: event=trip-cart_price-calculated, filter=${JSON.stringify(buildFilter({ eventName: 'trip-cart_price-calculated', ab_bucket: 'trip-cart-cta:request-a-quote' }))}, date=${dateStr}`);
-    e = safeGa4EventCount_(GA4_PROPERTY_ID, 'trip-cart_price-calculated', dateStr, dateStr, buildFilter({ eventName: 'trip-cart_price-calculated', ab_bucket: 'trip-cart-cta:request-a-quote' }));
+    // e: trip-cart_price-calculated events for request-a-quote bucket with customEvent:p2 = false
+    Logger.log(`▶️ GA4 request: event=trip-cart_price-calculated, filter=${JSON.stringify(buildFilter({ eventName: 'trip-cart_price-calculated', ab_bucket: 'trip-cart-cta:request-a-quote', p2: false }))}, date=${dateStr}`);
+    e = safeGa4EventCount_(GA4_PROPERTY_ID, 'trip-cart_price-calculated', dateStr, dateStr, buildFilter({ eventName: 'trip-cart_price-calculated', ab_bucket: 'trip-cart-cta:request-a-quote', p2: false }));
     // f: inquiry_start events for request-a-quote bucket
     Logger.log(`▶️ GA4 request: event=inquiry_start, filter=${JSON.stringify(buildFilter({ eventName: 'inquiry_start', ab_bucket: 'trip-cart-cta:request-a-quote' }))}, date=${dateStr}`);
     f = safeGa4EventCount_(GA4_PROPERTY_ID, 'inquiry_start', dateStr, dateStr, buildFilter({ eventName: 'inquiry_start', ab_bucket: 'trip-cart-cta:request-a-quote' }));
-    // m: trip-cart_price-calculated events with p1=true for request-a-quote bucket
+    // m: trip-cart_price-calculated events with p1=true and p2=true for request-a-quote bucket
     Logger.log(`▶️ GA4 request: event=trip-cart_price-calculated, param=p1, opt=${JSON.stringify({ ab_bucket: 'trip-cart-cta:request-a-quote' })}, date=${dateStr}`);
     m = safeGa4CountEventWithParamTrue_(GA4_PROPERTY_ID, 'trip-cart_price-calculated', 'p1', dateStr, dateStr, { ab_bucket: 'trip-cart-cta:request-a-quote' });
     if (m === 0) {
@@ -195,7 +258,7 @@ function abTestUpdateForDate(dateStr) {
     Logger.log('⚠️ AB bucket queries for columns E, F, M, N, P skipped because USE_AB_BUCKET is false.');
   }
 
-  // h: trip-cart_price-calculated events with p1=true for send-inquiry bucket
+  // h: trip-cart_price-calculated events with p1=true and p2=true for send-inquiry bucket
   Logger.log(`▶️ GA4 request: event=trip-cart_price-calculated, param=p1, opt=${JSON.stringify({ ab_bucket: 'trip-cart-cta:send-inquiry' })}, date=${dateStr}`);
   const h = safeGa4CountEventWithParamTrue_(GA4_PROPERTY_ID, 'trip-cart_price-calculated', 'p1', dateStr, dateStr, { ab_bucket: 'trip-cart-cta:send-inquiry' });
   if (h === 0) {
