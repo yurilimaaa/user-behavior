@@ -139,8 +139,8 @@ function ensureTripCartHeader_(sheet) {
  */
 function upsertTripCartDailyRow_(sheet, dateStr, v) {
   let row = findRowByDate_(sheet, dateStr);
-  if (!row) {
-    row = (sheet.getLastRow() || 1) + 1;
+  if (!row || row < 2) {
+    row = Math.max(sheet.getLastRow(), 1) + 1;
     sheet.getRange(row, 1).setValue(dateStr);
   }
   sheet.getRange(row, 1).setNumberFormat('yyyy-mm-dd');
