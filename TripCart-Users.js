@@ -17,7 +17,7 @@ const DRIVE_FOLDER_ID = '1cDY3s5pK99jHkSuliIifjrI_M3Fa245b';
 
 // === PUBLIC ENTRY POINTS ===
 function tripCartUsersBackfill(startDateStr, endDateStr) {
-  const start = startDateStr ? parseUTC_(startDateStr) : parseUTC_('2025-07-01');
+  const start = startDateStr ? parseUTC_(startDateStr) : parseUTC_('2025-09-19');
   const end = endDateStr ? parseUTC_(endDateStr) : yesterdayUTC_();
   for (let d = new Date(start); d <= end; d.setUTCDate(d.getUTCDate() + 1)) {
     const ds = toYYYYMMDD_(d);
@@ -26,7 +26,14 @@ function tripCartUsersBackfill(startDateStr, endDateStr) {
 }
 
 function tripCartUsersDailyUpdate(dateStr) {
-  const ds = dateStr && dateStr.trim() ? dateStr.trim() : toYYYYMMDD_(yesterdayUTC_());
+  let ds;
+  if (dateStr instanceof Date) {
+    ds = toYYYYMMDD_(dateStr);   // convert Date → string
+  } else if (typeof dateStr === 'string' && dateStr.trim()) {
+    ds = dateStr.trim();
+  } else {
+    ds = toYYYYMMDD_(yesterdayUTC_());
+  }
   Logger.log('Processing tripCartUsersDailyUpdate for date: %s', ds);
   tripCartUsersUpdateForDate(ds);
 }
@@ -296,3 +303,4 @@ function overrideTotalUsersColumnB() {
     }
   }
 }
+
