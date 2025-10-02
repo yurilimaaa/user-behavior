@@ -25,17 +25,38 @@ function tripCartUsersBackfill(startDateStr, endDateStr) {
   }
 }
 
-function tripCartUsersDailyUpdate(dateStr) {
-  let ds;
-  if (dateStr instanceof Date) {
-    ds = toYYYYMMDD_(dateStr);   // convert Date → string
-  } else if (typeof dateStr === 'string' && dateStr.trim()) {
-    ds = dateStr.trim();
-  } else {
-    ds = toYYYYMMDD_(yesterdayUTC_());
-  }
-  Logger.log('Processing tripCartUsersDailyUpdate for date: %s', ds);
+function tripCartUsersDailyUpdate(dateInput) {
+  const ds = coerceDateStr_(dateInput);
+  Logger.log('Processing tripCartUsersDailyUpdate for date: %s (inputType=%s)', ds, typeof dateInput);
   tripCartUsersUpdateForDate(ds);
+}
+/**
+ * Coerces a variety of inputs into a YYYY-MM-DD string.
+ * Accepts Date, ISO-like strings, or undefined (defaults to yesterday UTC).
+ * If a trigger event object was passed, it will be ignored and default used.
+ */
+function coerceDateStr_(input) {
+  try {
+    if (!input) {
+      return toYYYYMMDD_(yesterdayUTC_());
+    }
+    // If an Apps Script trigger event object was passed, ignore it.
+    if (typeof input === 'object' && !(input instanceof Date)) {
+      return toYYYYMMDD_(yesterdayUTC_());
+    }
+    if (input instanceof Date && !isNaN(input)) {
+      return toYYYYMMDD_(input);
+    }
+    if (typeof input === 'string') {
+      var s = String(input).trim();
+      if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+      var d = new Date(s);
+      if (!isNaN(d)) return toYYYYMMDD_(d);
+    }
+  } catch (e) {
+    Logger.log('coerceDateStr_ fallback due to error: %s', e && e.message ? e.message : e);
+  }
+  return toYYYYMMDD_(yesterdayUTC_());
 }
 
 // === CORE ===

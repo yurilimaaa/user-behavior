@@ -1,0 +1,74 @@
+ ================= AB-Test-SI-RQ-Daily Column Mapping =================
+
+A. date
+    - The reporting date (yyyy-MM-dd)
+
+B. inquiry-start-trip-cart
+    - Metric: activeUsers
+    - Event: trip-cart_price-calculated
+    - Filter: ab_bucket = "trip-cart-cta:send-inquiry", p2 = false
+
+C. inquiry-start-click
+    - Metric: activeUsers
+    - Event: inquiry_start
+    - Filter: ab_bucket = "trip-cart-cta:send-inquiry", p1 = send-inquiry-button
+
+D. % inquiry-start
+    - Formula: =IFERROR(C / B, 0)
+
+E. request-quote-trip-cart
+    - Metric: activeUsers
+    - Event: trip-cart_price-calculated
+    - Filter: ab_bucket = "trip-cart-cta:request-a-quote", p2 = false
+
+F. request-start
+    - Metric: activeUsers
+    - Event: inquiry_start
+    - Filter: ab_bucket = "trip-cart-cta:request-a-quote",  p1 = send-inquiry-button
+
+G. % request-start
+    - Formula: =IFERROR(F / E, 0)
+
+H. bn-inquiry-start-trip-cart
+    - Metric: activeUsers
+    - Event: trip-cart_price-calculated
+    - Filter: ab_bucket = "trip-cart-cta:send-inquiry", p2 = true
+
+I. bn-click
+    - Metric: activeUsers
+    - Event: trip-cart_book-now-click
+    - Filter: ab_bucket = "trip-cart-cta:send-inquiry"
+
+ J. % bn-click
+     - Formula: =IFERROR(I / H, 0)
+
+K. inquiry-start-click (p2 = true)
+    - Metric: activeUsers
+    - Event: inquiry_start
+    - Filter: ab_bucket = "trip-cart-cta:send-inquiry", p1 = contact-owner-button
+
+L. % inquiry-start (p2 = true)
+     - Formula: =IFERROR(K / H, 0)
+
+M. bn-request-trip-cart
+     - Metric: activeUsers
+     - Event: trip-cart_price-calculated
+     - Filter: ab_bucket = "trip-cart-cta:request-a-quote", p2 = true
+
+N. bn-click (request-a-quote)
+     - Metric: activeUsers
+     - Event: trip-cart_book-now-click
+     - Filter: ab_bucket = "trip-cart-cta:request-a-quote", 
+
+O. % bn-click (request-a-quote)
+     - Formula: =IFERROR(N / M, 0)
+
+P. request-start-click
+     - Metric: activeUsers
+     - Event: inquiry_start
+     - Filter: ab_bucket = "trip-cart-cta:request-a-quote", p1 = contact-owner-button 
+
+Q. % request-start (p2 = true)
+     - Formula: =IFERROR(P / M, 0)
+
+ ======================================================================

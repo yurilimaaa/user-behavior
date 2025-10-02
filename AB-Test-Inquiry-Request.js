@@ -1,5 +1,5 @@
 // Toggle to disable ab_bucket filters if dimension not yet live
-const USE_AB_BUCKET = false;
+const USE_AB_BUCKET = true;
 
 function buildFilter(baseFilter) {
   const clone = { ...baseFilter };
@@ -94,8 +94,16 @@ function safeGa4EventCount_(propertyId, eventName, startDate, endDate, filter) {
     if (filter && filter.ab_bucket) {
       expr.push({
         filter: {
-          fieldName: 'ab_bucket',
+          fieldName: 'customEvent:ab_bucket',
           stringFilter: { value: filter.ab_bucket, matchType: 'EXACT' }
+        }
+      });
+    }
+    if (filter && filter.p1) {
+      expr.push({
+        filter: {
+          fieldName: 'customEvent:p1',
+          stringFilter: { value: filter.p1, matchType: 'EXACT' }
         }
       });
     }
@@ -148,7 +156,7 @@ function safeGa4CountEventWithParamTrue_(propertyId, eventName, paramName, start
       if (typeof USE_AB_BUCKET !== 'undefined' && USE_AB_BUCKET) {
         expr.push({
           filter: {
-            fieldName: 'ab_bucket',
+            fieldName: 'customEvent:ab_bucket',
             stringFilter: { value: opt.ab_bucket, matchType: 'EXACT' }
           }
         });
@@ -208,6 +216,50 @@ function abTestBackfill(startDateStr, endDateStr) {
   }
 }
 
+/**
+ * Backfill AB-Test data for the last 3 days (excluding today).
+ * Convenience wrapper.
+ */
+function abTestBackfillLast3Days() {
+  const today = new Date();
+  today.setUTCHours(0, 0, 0, 0);
+  // startDate: today - 3 days, endDate: today - 1 day
+  const startDate = new Date(today.getTime() - 3 * 24 * 60 * 60 * 1000);
+  const endDate = new Date(today.getTime() - 1 * 24 * 60 * 60 * 1000);
+  abTestBackfill(formatDate(startDate), formatDate(endDate));
+}
+
+function fetchInquiryStartWithContactOwner_(dateStr, abBucket) {
+  const propertyId = GA4_PROPERTY_ID;
+  const startDate = dateStr;
+  const endDate = dateStr;
+  const expr = [];
+  expr.push({
+    filter: { fieldName: 'eventName', stringFilter: { value: 'inquiry_start', matchType: 'EXACT' } }
+  });
+  expr.push({
+    filter: { fieldName: 'customEvent:ab_bucket', stringFilter: { value: abBucket, matchType: 'EXACT' } }
+  });
+  expr.push({
+    filter: { fieldName: 'customEvent:p1', stringFilter: { value: 'contact-owner-button', matchType: 'EXACT' } }
+  });
+
+  const request = {
+    dateRanges: [{ startDate, endDate }],
+    metrics: [{ name: 'activeUsers' }],
+    dimensions: [{ name: 'eventName' }],
+    dimensionFilter: { andGroup: { expressions: expr } },
+    keepEmptyRows: false
+  };
+
+  const res = ga4RunReport_(propertyId, request);
+  if (res && res.rows && res.rows.length > 0) {
+    const v = res.rows[0].metricValues && res.rows[0].metricValues[0] ? Number(res.rows[0].metricValues[0].value) : 0;
+    return isFinite(v) ? v : 0;
+  }
+  return 0;
+}
+
 function abTestUpdateForDate(dateStr) {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const sheet = ss.getSheetByName(ABTEST_SHEET_NAME);
@@ -223,57 +275,27 @@ function abTestUpdateForDate(dateStr) {
   let row = findRowForDate_(sheet, dateStr, colMap.date);
   if (!row) row = sheet.getLastRow() + 1;
 
-  // --- GA4 queries ---
-  // b: trip-cart_price-calculated events for send-inquiry bucket with customEvent:p2 = false
-  Logger.log(`▶️ GA4 request: event=trip-cart_price-calculated, filter=${JSON.stringify(buildFilter({ eventName: 'trip-cart_price-calculated', ab_bucket: 'trip-cart-cta:send-inquiry', p2: false }))}, date=${dateStr}`);
-  const b = safeGa4EventCount_(GA4_PROPERTY_ID, 'trip-cart_price-calculated', dateStr, dateStr, buildFilter({ eventName: 'trip-cart_price-calculated', ab_bucket: 'trip-cart-cta:send-inquiry', p2: false }));
-  // c: inquiry_start events for send-inquiry bucket
-  Logger.log(`▶️ GA4 request: event=inquiry_start, filter=${JSON.stringify(buildFilter({ eventName: 'inquiry_start', ab_bucket: 'trip-cart-cta:send-inquiry' }))}, date=${dateStr}`);
-  const c = safeGa4EventCount_(GA4_PROPERTY_ID, 'inquiry_start', dateStr, dateStr, buildFilter({ eventName: 'inquiry_start', ab_bucket: 'trip-cart-cta:send-inquiry' }));
-
-  let e = 0, f = 0, m = 0, n = 0, p = 0;
-  if (USE_AB_BUCKET) {
-    // e: trip-cart_price-calculated events for request-a-quote bucket with customEvent:p2 = false
-    Logger.log(`▶️ GA4 request: event=trip-cart_price-calculated, filter=${JSON.stringify(buildFilter({ eventName: 'trip-cart_price-calculated', ab_bucket: 'trip-cart-cta:request-a-quote', p2: false }))}, date=${dateStr}`);
-    e = safeGa4EventCount_(GA4_PROPERTY_ID, 'trip-cart_price-calculated', dateStr, dateStr, buildFilter({ eventName: 'trip-cart_price-calculated', ab_bucket: 'trip-cart-cta:request-a-quote', p2: false }));
-    // f: inquiry_start events for request-a-quote bucket
-    Logger.log(`▶️ GA4 request: event=inquiry_start, filter=${JSON.stringify(buildFilter({ eventName: 'inquiry_start', ab_bucket: 'trip-cart-cta:request-a-quote' }))}, date=${dateStr}`);
-    f = safeGa4EventCount_(GA4_PROPERTY_ID, 'inquiry_start', dateStr, dateStr, buildFilter({ eventName: 'inquiry_start', ab_bucket: 'trip-cart-cta:request-a-quote' }));
-    // m: trip-cart_price-calculated events with p1=true and p2=true for request-a-quote bucket
-    Logger.log(`▶️ GA4 request: event=trip-cart_price-calculated, param=p1, opt=${JSON.stringify({ ab_bucket: 'trip-cart-cta:request-a-quote' })}, date=${dateStr}`);
-    m = safeGa4CountEventWithParamTrue_(GA4_PROPERTY_ID, 'trip-cart_price-calculated', 'p1', dateStr, dateStr, { ab_bucket: 'trip-cart-cta:request-a-quote' });
-    if (m === 0) {
-      Logger.log(`⚠️ Skipping m (trip-cart_price-calculated p1=true request-a-quote) due to zero or inactive dimension.`);
-    }
-    // n: trip-cart_book-now-click events for request-a-quote bucket
-    Logger.log(`▶️ GA4 request: event=trip-cart_book-now-click, filter=${JSON.stringify(buildFilter({ eventName: 'trip-cart_book-now-click', ab_bucket: 'trip-cart-cta:request-a-quote' }))}, date=${dateStr}`);
-    n = safeGa4EventCount_(GA4_PROPERTY_ID, 'trip-cart_book-now-click', dateStr, dateStr, buildFilter({ eventName: 'trip-cart_book-now-click', ab_bucket: 'trip-cart-cta:request-a-quote' }));
-    // p: inquiry_start events with p1=true for request-a-quote bucket
-    Logger.log(`▶️ GA4 request: event=inquiry_start, param=p1, opt=${JSON.stringify({ ab_bucket: 'trip-cart-cta:request-a-quote' })}, date=${dateStr}`);
-    p = safeGa4CountEventWithParamTrue_(GA4_PROPERTY_ID, 'inquiry_start', 'p1', dateStr, dateStr, { ab_bucket: 'trip-cart-cta:request-a-quote' });
-    if (p === 0) {
-      Logger.log(`⚠️ Skipping p (inquiry_start p1=true request-a-quote) due to zero or inactive dimension.`);
-    }
-  } else {
-    Logger.log('⚠️ AB bucket queries for columns E, F, M, N, P skipped because USE_AB_BUCKET is false.');
-  }
-
-  // h: trip-cart_price-calculated events with p1=true and p2=true for send-inquiry bucket
-  Logger.log(`▶️ GA4 request: event=trip-cart_price-calculated, param=p1, opt=${JSON.stringify({ ab_bucket: 'trip-cart-cta:send-inquiry' })}, date=${dateStr}`);
-  const h = safeGa4CountEventWithParamTrue_(GA4_PROPERTY_ID, 'trip-cart_price-calculated', 'p1', dateStr, dateStr, { ab_bucket: 'trip-cart-cta:send-inquiry' });
-  if (h === 0) {
-    Logger.log(`⚠️ Skipping h (trip-cart_price-calculated p1=true send-inquiry) due to zero or inactive dimension.`);
-  }
-  // i: trip-cart_book-now-click events for send-inquiry bucket
-  Logger.log(`▶️ GA4 request: event=trip-cart_book-now-click, filter=${JSON.stringify(buildFilter({ eventName: 'trip-cart_book-now-click', ab_bucket: 'trip-cart-cta:send-inquiry' }))}, date=${dateStr}`);
-  const i = safeGa4EventCount_(GA4_PROPERTY_ID, 'trip-cart_book-now-click', dateStr, dateStr, buildFilter({ eventName: 'trip-cart_book-now-click', ab_bucket: 'trip-cart-cta:send-inquiry' }));
-
-  // k: inquiry_start events with p1=true for send-inquiry bucket
-  Logger.log(`▶️ GA4 request: event=inquiry_start, param=p1, opt=${JSON.stringify({ ab_bucket: 'trip-cart-cta:send-inquiry' })}, date=${dateStr}`);
-  const k = safeGa4CountEventWithParamTrue_(GA4_PROPERTY_ID, 'inquiry_start', 'p1', dateStr, dateStr, { ab_bucket: 'trip-cart-cta:send-inquiry' });
-  if (k === 0) {
-    Logger.log(`⚠️ Skipping k (inquiry_start p1=true send-inquiry) due to zero or inactive dimension.`);
-  }
+  // --- GA4 queries (updated mapping for Daily tab) ---
+  // b: inquiry-start-trip-cart
+  const b = safeGa4EventCount_(GA4_PROPERTY_ID, 'trip-cart_price-calculated', dateStr, dateStr, { ab_bucket: 'trip-cart-cta:send-inquiry', p2: false });
+  // c: inquiry-start-click with p1=send-inquiry-button
+  const c = safeGa4EventCount_(GA4_PROPERTY_ID, 'inquiry_start', dateStr, dateStr, { ab_bucket: 'trip-cart-cta:send-inquiry', p1: 'send-inquiry-button' });
+  // e: request-quote-trip-cart with p1=send-inquiry-button
+  const e = safeGa4EventCount_(GA4_PROPERTY_ID, 'trip-cart_price-calculated', dateStr, dateStr, { ab_bucket: 'trip-cart-cta:request-a-quote', p2: false});
+  // f: request-start with p1=send-inquiry-button
+  const f = safeGa4EventCount_(GA4_PROPERTY_ID, 'inquiry_start', dateStr, dateStr, { ab_bucket: 'trip-cart-cta:request-a-quote', p1: 'send-inquiry-button' });
+  // h: bn-inquiry-start-trip-cart
+  const h = safeGa4EventCount_(GA4_PROPERTY_ID, 'trip-cart_price-calculated', dateStr, dateStr, { ab_bucket: 'trip-cart-cta:send-inquiry', p2: true });
+  // i: bn-click with p1=contact-owner-button
+  const i = safeGa4EventCount_(GA4_PROPERTY_ID, 'trip-cart_book-now-click', dateStr, dateStr, { ab_bucket: 'trip-cart-cta:send-inquiry',});
+  // k: inquiry-start-click (p1 = contact-owner-button)
+  const k = safeGa4EventCount_(GA4_PROPERTY_ID, 'inquiry_start', dateStr, dateStr, { ab_bucket: 'trip-cart-cta:send-inquiry', p1: 'contact-owner-button' }); 
+  // m: bn-request-trip-cart
+  const m = safeGa4EventCount_(GA4_PROPERTY_ID, 'trip-cart_price-calculated', dateStr, dateStr, { ab_bucket: 'trip-cart-cta:request-a-quote', p2: true });
+  // n: bn-click (request-a-quote) with p1=contact-owner-button
+  const n = safeGa4EventCount_(GA4_PROPERTY_ID, 'trip-cart_book-now-click', dateStr, dateStr, { ab_bucket: 'trip-cart-cta:request-a-quote'});
+  // p: request-start-click (p1 = contact-owner-button)
+  const p = safeGa4EventCount_(GA4_PROPERTY_ID, 'inquiry_start', dateStr, dateStr, { ab_bucket: 'trip-cart-cta:request-a-quote', p1: 'contact-owner-button' }); 
 
   // --- Write values ---
   sheet.getRange(row, colMap.date).setValue(dateStr);
@@ -289,12 +311,18 @@ function abTestUpdateForDate(dateStr) {
   sheet.getRange(row, colMap.p).setValue(p);
 
   // --- Formulas for % cols ---
+  // d = C/B
   sheet.getRange(row, colMap.d).setFormulaR1C1(`=IFERROR(RC[-1]/RC[-2],0)`);
+  // g = F/E
   sheet.getRange(row, colMap.g).setFormulaR1C1(`=IFERROR(RC[-1]/RC[-2],0)`);
+  // j = I/H
   sheet.getRange(row, colMap.j).setFormulaR1C1(`=IFERROR(RC[-1]/RC[-2],0)`);
+  // l = K/H
   sheet.getRange(row, colMap.l).setFormulaR1C1(`=IFERROR(RC[-1]/RC[-4],0)`);
+  // o = N/M
   sheet.getRange(row, colMap.o).setFormulaR1C1(`=IFERROR(RC[-1]/RC[-2],0)`);
-  sheet.getRange(row, colMap.q).setFormulaR1C1(`=IFERROR(RC[-1]/RC[-3],0)`);
+  // q = P/M
+  sheet.getRange(row, colMap.q).setFormulaR1C1(`=IFERROR(RC[-1]/RC[-4],0)`);
 
   Logger.log(`✅ AB-Test updated for ${dateStr}`);
 }
@@ -321,3 +349,7 @@ function ga4EventCountWithRequest_(propertyId, request) {
   }
   return 0;
 }
+
+// Backfill dates *uncomment — update dates and run abTestDailyUpdate function
+// AB was launched on 2025-09-16
+//abTestBackfill("2025-09-16", "2025-09-26");

@@ -1,0 +1,83 @@
+================= AB-Test-SI-RQ-Summary Column Mapping =================
+
+// Always use activeUsers
+// Use runFunnelReport instead of runReport
+
+Row 2 
+  B2 - Users
+       Metric: activeUsers
+       Event: trip-cart_price-calculated
+       Filter: ab_bucket = "trip-cart-cta:send-inquiry", p2: 'false'
+
+  C2 - Start
+       Metric: eventCount
+       Event: inquiry_start
+       Filter: ab_bucket = "trip-cart-cta:send-inquiry", p1: 'send-inquiry-button'
+
+  D2 - Submit 
+       Metric: eventCount
+       Event: inquiry_sumit_sucess
+
+  E2 - Purchase
+       Metric: eventCount
+       Event: purchase
+
+Row 3 
+  B3 - Users
+       Metric: activeUsers
+       Event: trip-cart_price-calculated
+       Filter: ab_bucket = "trip-cart-cta:request-a-quote", p2: 'false'
+
+  C3 - Start
+       Metric: eventCount
+       Event: inquiry_start
+       Filter: ab_bucket = "trip-cart-cta:request-a-quote",  p1: 'send-inquiry-button'
+
+  D3 - Submit
+       Metric: eventCount
+       Event: inquiry_sumit_sucess
+
+
+  E2 - Purchase
+       Metric: eventCount
+       Event: purchase
+
+Row 4 
+  B4 - Users
+       Metric: activeUsers
+       Event: trip-cart_price-calculated
+       Filter: ab_bucket = "trip-cart-cta:send-inquiry", p2: `true`
+
+  C4 - Start
+       Metric: eventCount
+       Event: inquiry_start
+       Filter: ab_bucket = "trip-cart-cta:send-inquiry", p1: 'contact-owner-button'
+
+  D4 - Submit
+       Metric: eventCount
+       Event: inquiry_sumit_sucess
+
+  E4 - Purchase
+       Metric: eventCount
+       Event: purchase
+
+Row 5 
+  B5 - Users
+       Metric: activeUsers
+       Event: trip-cart_price-calculated
+       Filter: ab_bucket = "trip-cart-cta:request-a-quote", p2: `true`
+
+  C5 - Start
+       Metric: eventCount
+       Event: inquiry_start
+       Filter: ab_bucket = "trip-cart-cta:request-a-quote", p1: 'contact-owner-button'
+
+  D5 - Submit
+       Metric: eventCount
+       Event: inquiry_sumit_sucess
+
+  E5 - Purchase
+       Metric: eventCount
+       Event: purchase
+
+=======================================================================
